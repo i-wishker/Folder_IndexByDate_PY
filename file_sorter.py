@@ -3,7 +3,13 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-IGNORE_FILE = ".file_sorter_ignore.txt"
+# ===================== CONFIG =====================
+IGNORE_STORAGE_DIR = r"DirNameHere" #writer your IgnoreStorage here
+IGNORE_FILE_PATH = os.path.join(IGNORE_STORAGE_DIR, "ignored_files.py")
+
+ALWAYS_IGNORE = {".ignored_files.txt"}
+# ==================================================
+
 
 class FileSorterApp:
     def __init__(self, root):
@@ -17,8 +23,11 @@ class FileSorterApp:
         self.temp_ignored = set()
         self.perma_ignored = set()
 
+        os.makedirs(IGNORE_STORAGE_DIR, exist_ok=True)
+        self.load_permanent_ignores()
         self.build_ui()
 
+    # ---------------- UI ----------------
     def build_ui(self):
         tk.Label(
             self.root,
@@ -26,7 +35,6 @@ class FileSorterApp:
             font=("Segoe UI", 16, "bold")
         ).pack(pady=10)
 
-        # Top buttons
         btn_frame = tk.Frame(self.root)
         btn_frame.pack(pady=10)
 
@@ -39,7 +47,6 @@ class FileSorterApp:
         )
         self.confirm_btn.grid(row=0, column=1, padx=6)
 
-        # Ignore buttons
         ttk.Button(
             btn_frame, text="Ignore Temporarily",
             command=self.ignore_temp
@@ -50,10 +57,9 @@ class FileSorterApp:
             command=self.ignore_permanent
         ).grid(row=0, column=3, padx=6)
 
-        # Preview
         tk.Label(
             self.root,
-            text="Preview (select files to ignore)",
+            text="Preview (old → new)",
             font=("Segoe UI", 11, "bold")
         ).pack(pady=(10, 5))
 
@@ -73,52 +79,53 @@ class FileSorterApp:
         scrollbar.config(command=self.preview_list.yview)
 
         self.status = tk.Label(
-            self.root, text="Select a folder to begin",
-            relief=tk.SUNKEN, anchor="w", font=("Segoe UI", 9)
+            self.root,
+            text="Select a folder to begin",
+            anchor="w",
+            relief=tk.SUNKEN,
+            font=("Segoe UI", 9)
         )
         self.status.pack(fill=tk.X, side=tk.BOTTOM)
 
+    # ---------------- Ignore handling ----------------
     def load_permanent_ignores(self):
-        path = os.path.join(self.directory, IGNORE_FILE)
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                self.perma_ignored = set(line.strip() for line in f)
+        if os.path.exists(IGNORE_FILE_PATH):
+            with open(IGNORE_FILE_PATH, "r", encoding="utf-8") as f:
+                self.perma_ignored = set(
+                    line.strip() for line in f if line.strip()
+                )
 
     def save_permanent_ignores(self):
-        path = os.path.join(self.directory, IGNORE_FILE)
-        with open(path, "w", encoding="utf-8") as f:
+        with open(IGNORE_FILE_PATH, "w", encoding="utf-8") as f:
             for name in sorted(self.perma_ignored):
                 f.write(name + "\n")
 
+    # ---------------- Core logic ----------------
     def choose_directory(self):
         self.directory = filedialog.askdirectory()
         if not self.directory:
             return
 
-        self.temp_ignored.clear()
-        self.rename_map.clear()
         self.preview_list.delete(0, tk.END)
+        self.rename_map.clear()
         self.confirm_btn.config(state=tk.DISABLED)
-
-        self.load_permanent_ignores()
 
         files = [
             f for f in os.listdir(self.directory)
             if os.path.isfile(os.path.join(self.directory, f))
+            and f not in ALWAYS_IGNORE
             and f not in self.perma_ignored
+            and f not in self.temp_ignored
         ]
 
         if not files:
-            messagebox.showinfo("Info", "No files found.")
+            self.status.config(text="No eligible files found")
             return
 
         files.sort(key=lambda f: os.stat(os.path.join(self.directory, f)).st_ctime)
         used_names = {}
 
         for file in files:
-            if file in self.temp_ignored:
-                continue
-
             ctime = os.stat(os.path.join(self.directory, file)).st_ctime
             date_str = datetime.fromtimestamp(ctime).strftime("%Y-%m-%d")
             _, ext = os.path.splitext(file)
@@ -139,12 +146,10 @@ class FileSorterApp:
             self.status.config(text="No changes needed")
 
     def get_selected_files(self):
-        selected = self.preview_list.curselection()
-        files = []
-        for i in selected:
-            old_name = self.preview_list.get(i).split(" → ")[0]
-            files.append(old_name)
-        return files
+        return [
+            self.preview_list.get(i).split(" → ")[0]
+            for i in self.preview_list.curselection()
+        ]
 
     def ignore_temp(self):
         files = self.get_selected_files()
@@ -161,7 +166,7 @@ class FileSorterApp:
 
         if not messagebox.askyesno(
             "Permanent Ignore",
-            "These files will NEVER be renamed again.\nContinue?"
+            "These files will be ignored globally.\nContinue?"
         ):
             return
 
@@ -191,10 +196,12 @@ class FileSorterApp:
         self.confirm_btn.config(state=tk.DISABLED)
         self.status.config(text="✅ Files renamed successfully")
 
+
 def main():
     root = tk.Tk()
     FileSorterApp(root)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()

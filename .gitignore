@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+#ignored_files.py
+ignored_files.py
+
 # Distribution / packaging
 .Python
 build/
