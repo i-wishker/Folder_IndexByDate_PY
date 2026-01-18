@@ -1,11 +1,13 @@
 import os
+import json
 from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 # ===================== CONFIG =====================
-IGNORE_STORAGE_DIR = r"DirNameHere" #writer your IgnoreStorage here
-IGNORE_FILE_PATH = os.path.join(IGNORE_STORAGE_DIR, "ignored_files.py")
+BASE_DIR = r"D:\WorkPlace\Adnbrand\Sorter"
+IGNORE_FILE = os.path.join(BASE_DIR, "ignored_files.py")
+UNDO_FILE = os.path.join(BASE_DIR, "undo_log.json")
 
 ALWAYS_IGNORE = {".ignored_files.txt"}
 # ==================================================
@@ -15,7 +17,7 @@ class FileSorterApp:
     def __init__(self, root):
         self.root = root
         self.root.title("File Sorter by Creation Date")
-        self.root.geometry("720x480")
+        self.root.geometry("760x500")
         self.root.resizable(False, False)
 
         self.directory = None
@@ -23,7 +25,7 @@ class FileSorterApp:
         self.temp_ignored = set()
         self.perma_ignored = set()
 
-        os.makedirs(IGNORE_STORAGE_DIR, exist_ok=True)
+        os.makedirs(BASE_DIR, exist_ok=True)
         self.load_permanent_ignores()
         self.build_ui()
 
@@ -47,15 +49,17 @@ class FileSorterApp:
         )
         self.confirm_btn.grid(row=0, column=1, padx=6)
 
-        ttk.Button(
-            btn_frame, text="Ignore Temporarily",
-            command=self.ignore_temp
-        ).grid(row=0, column=2, padx=6)
+        self.undo_btn = ttk.Button(
+            btn_frame, text="Undo Last Rename",
+            command=self.undo_rename
+        )
+        self.undo_btn.grid(row=0, column=2, padx=6)
 
-        ttk.Button(
-            btn_frame, text="Ignore Permanently",
-            command=self.ignore_permanent
-        ).grid(row=0, column=3, padx=6)
+        ttk.Button(btn_frame, text="Ignore Temporarily", command=self.ignore_temp)\
+            .grid(row=0, column=3, padx=6)
+
+        ttk.Button(btn_frame, text="Ignore Permanently", command=self.ignore_permanent)\
+            .grid(row=0, column=4, padx=6)
 
         tk.Label(
             self.root,
@@ -87,20 +91,18 @@ class FileSorterApp:
         )
         self.status.pack(fill=tk.X, side=tk.BOTTOM)
 
-    # ---------------- Ignore handling ----------------
+    # ---------------- Ignore ----------------
     def load_permanent_ignores(self):
-        if os.path.exists(IGNORE_FILE_PATH):
-            with open(IGNORE_FILE_PATH, "r", encoding="utf-8") as f:
-                self.perma_ignored = set(
-                    line.strip() for line in f if line.strip()
-                )
+        if os.path.exists(IGNORE_FILE):
+            with open(IGNORE_FILE, "r", encoding="utf-8") as f:
+                self.perma_ignored = set(line.strip() for line in f if line.strip())
 
     def save_permanent_ignores(self):
-        with open(IGNORE_FILE_PATH, "w", encoding="utf-8") as f:
+        with open(IGNORE_FILE, "w", encoding="utf-8") as f:
             for name in sorted(self.perma_ignored):
                 f.write(name + "\n")
 
-    # ---------------- Core logic ----------------
+    # ---------------- Core ----------------
     def choose_directory(self):
         self.directory = filedialog.askdirectory()
         if not self.directory:
@@ -123,17 +125,17 @@ class FileSorterApp:
             return
 
         files.sort(key=lambda f: os.stat(os.path.join(self.directory, f)).st_ctime)
-        used_names = {}
+        used = {}
 
         for file in files:
             ctime = os.stat(os.path.join(self.directory, file)).st_ctime
-            date_str = datetime.fromtimestamp(ctime).strftime("%Y-%m-%d")
+            date = datetime.fromtimestamp(ctime).strftime("%Y-%m-%d")
             _, ext = os.path.splitext(file)
 
-            base = f"{date_str}{ext}"
-            count = used_names.get(base, 0)
-            new_name = f"{date_str}_{count}{ext}" if count else base
-            used_names[base] = count + 1
+            base = f"{date}{ext}"
+            idx = used.get(base, 0)
+            new_name = f"{date}_{idx}{ext}" if idx else base
+            used[base] = idx + 1
 
             if file != new_name:
                 self.rename_map.append((file, new_name))
@@ -145,45 +147,20 @@ class FileSorterApp:
         else:
             self.status.config(text="No changes needed")
 
-    def get_selected_files(self):
-        return [
-            self.preview_list.get(i).split(" → ")[0]
-            for i in self.preview_list.curselection()
-        ]
-
-    def ignore_temp(self):
-        files = self.get_selected_files()
-        if not files:
-            return
-        self.temp_ignored.update(files)
-        self.choose_directory()
-        self.status.config(text="Temporarily ignored selected files")
-
-    def ignore_permanent(self):
-        files = self.get_selected_files()
-        if not files:
-            return
-
-        if not messagebox.askyesno(
-            "Permanent Ignore",
-            "These files will be ignored globally.\nContinue?"
-        ):
-            return
-
-        self.perma_ignored.update(files)
-        self.save_permanent_ignores()
-        self.choose_directory()
-        self.status.config(text="Permanently ignored selected files")
-
     def confirm_rename(self):
         if not self.rename_map:
             return
 
-        if not messagebox.askyesno(
-            "Confirm Rename",
-            f"Rename {len(self.rename_map)} files?"
-        ):
+        if not messagebox.askyesno("Confirm", "Proceed with renaming?"):
             return
+
+        undo_data = {
+            "directory": self.directory,
+            "files": self.rename_map
+        }
+
+        with open(UNDO_FILE, "w", encoding="utf-8") as f:
+            json.dump(undo_data, f, indent=2)
 
         for old, new in self.rename_map:
             os.rename(
@@ -194,7 +171,53 @@ class FileSorterApp:
         self.preview_list.delete(0, tk.END)
         self.rename_map.clear()
         self.confirm_btn.config(state=tk.DISABLED)
-        self.status.config(text="✅ Files renamed successfully")
+        self.status.config(text="✅ Files renamed (undo available)")
+
+    def undo_rename(self):
+        if not os.path.exists(UNDO_FILE):
+            messagebox.showinfo("Undo", "No rename operation to undo.")
+            return
+
+        with open(UNDO_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        directory = data["directory"]
+        files = data["files"]
+
+        for old, new in reversed(files):
+            new_path = os.path.join(directory, new)
+            old_path = os.path.join(directory, old)
+            if os.path.exists(new_path):
+                os.rename(new_path, old_path)
+
+        os.remove(UNDO_FILE)
+        self.status.config(text="↩ Undo completed successfully")
+
+    # ---------------- Ignore actions ----------------
+    def get_selected_files(self):
+        return [
+            self.preview_list.get(i).split(" → ")[0]
+            for i in self.preview_list.curselection()
+        ]
+
+    def ignore_temp(self):
+        self.temp_ignored.update(self.get_selected_files())
+        self.choose_directory()
+
+    def ignore_permanent(self):
+        files = self.get_selected_files()
+        if not files:
+            return
+
+        if not messagebox.askyesno(
+            "Permanent Ignore",
+            "These files will be ignored globally. Continue?"
+        ):
+            return
+
+        self.perma_ignored.update(files)
+        self.save_permanent_ignores()
+        self.choose_directory()
 
 
 def main():
